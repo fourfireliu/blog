@@ -29,7 +29,7 @@ Boolean b = transactionTemplate.execute(new TransactionCallback<Boolean>() {
 
 这样的调用很简单，基本没有关于各种情况下commit() rollback()相关的代码，也没有关于各种Exception的处理，下面就详细看一下TransactionTemplate里是怎么封装实现这种效果的。
 
- ![transactionTemplateClass](pics\transactionTemplateClass.png) 
+ {% asset_img transactionTemplateClass.png transactionTemplateClass %}
 
 根据Spring源码画了一个简单的类图，可以看出TransactionTemplate继承了DefaultTransactionDefinition类，实现了TransactionOperations接口, DefaultTransactionDefinition类实现了TransactionDefinition接口，
 
