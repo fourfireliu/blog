@@ -1,7 +1,7 @@
 ---
 title: TransactionTemplate 代码理解
 date: 2016-05-25 14:10:36
-tags: spring java 数据库 事务
+tags: -spring -java
 
 ---
 
