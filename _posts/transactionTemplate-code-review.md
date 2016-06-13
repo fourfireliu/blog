@@ -1,8 +1,11 @@
 ---
 title: TransactionTemplate 代码理解
 date: 2016-05-25 14:10:36
-tags: -spring -java
 
+tags: 
+  - Spring
+categories: 
+  - Java
 ---
 
 org.springframework.transaction.support.TransactionTemplate是spring里用来实现事务的主要接口类, TransactionTemplate使用方式一般如下:
@@ -31,6 +34,7 @@ Boolean b = transactionTemplate.execute(new TransactionCallback<Boolean>() {
  {% asset_img transactionTemplateClass.png transactionTemplateClass %}
 
 根据Spring源码画了一个简单的类图，可以看出TransactionTemplate继承了DefaultTransactionDefinition类，实现了TransactionOperations接口, DefaultTransactionDefinition类实现了TransactionDefinition接口，
+<!-- more -->
 
 最底层的TransactionDefinition接口定义了spring里用到事务的隔离级别(如ISOLATION_DEFAULT),事务的传播级别(如PROPAGATION_REQUIRED)，这些和数据库的相关定义是一致的，但不清楚为啥不用枚举或者final关键字来修饰，同时还提供了一些查询当前事务属性(timeout, readOnly, isolationLevel, propagationBehavior)的接口，但是没有提供这些属性，也没有相关的set方法，很有意思。这些属性以及set方法在DefaultTransactionDefinition类中提供了, 同时这些方法都用final来修饰，表明了不能继续override了，因为这是基础实现。
 ```java
