@@ -137,7 +137,36 @@ var bar(void) {
 5. cpu1于是跳出while循环，执行下一步，但这时cpu0的read invalidate还没到，因此cpu1取了自己的老缓存a=0，因此返回false。
 6. cpu0的read invalidate紧赶慢赶总算到了，废弃了cpu1的老cache a，但已经太晚了。cpu0收到invalidate acknowledge然后store buffer把a=1 存到cache里 modified。
 
-这里为什么会和想要的结果不一样呢？因为cpu0的对一个变量的修改没有及时通知到cpu1上，但硬件工程师也没辙。
+
+
+这里为什么会和想要的结果不一样呢？因为cpu0的对一个变量的修改没有及时通知到cpu1上，但硬件工程师也没辙，因为不可能知道一个cpu的哪些操作会影响到另一个cpu的哪些操作，cpu1只是自顾自的做它的事，不知道有别的cpu已经废弃了它的缓存。因此，内存屏障(memory barrier)出现了：
+
+```java
+var foo(void) {
+  a = 1;
+  smp_mb();
+  b = 1;
+}
+
+var bar(void) {
+  while (b == 0) {
+  	continue;
+  }
+  assert(a == 1);
+}
+```
+
+smp_mb()的作用是: 导致在下一次store指令之前，cpu必须处理完现有的store buffer，它可以有两个实现，要么在下一次执行store指令，把store buffer的指令执行完；要么把下一次store命令也放到store buffer里，不管这个变量是不是已经在自己的cache里了。这样的话，指令执行流程就变成了这样：
+
+1. cpu0执行a=1，因为a不在cpu0的cache里，因此cpu0发出一个read invalidate然后把a=1的操作放到store buffer里。 
+2. cpu1执行 while(b==0) continue; 这里它不是赋值b，只是尝试获取b，b不在它的cache里，因此它发了个read消息出去。
+3. cpu0执行smp_mb()，标记出所有目前的store buffer指令(目前a=1)
+4. cpu0执行b=1 因为有了smp_mb()标记出store buffer里有值，它只能把b=1也放进store buffer。
+5. cpu0收到read消息，于是将初始值0返回出去，同时改状态为shared(我们先假设modified-shared同时是刷了memory的)，cpu1也收到了read response，于是把b=0存到cache里，它也是shared的。
+6. cpu1收到关于a的read invalidate消息，返回a=0然后invalidate了自己cache的a。
+7. cpu0收到了a=0，存入cache，它现在是modified状态了。它现在开始处理store buffer，在cache中有a，直接改成a=1，接下来是b了，但b现在是share状态，因此发了一个invalidate消息(如果自己没有 那就是发read invalidate消息了).
+8. cpu1收到invalidate消息，清掉自己的b=0的cache，在下一次循环中，又要用到b，只能发一个read消息，cpu0先收到之前的invalidate acknowledge消息，把自己的b改成1并刷入memory，现在它的b是exclusive状态，接下来它又收到read消息，将b=1回复给cpu1，同时它的b状态变为shared.
+9. cpu1收到b=1后，终于可以跳出while了，接着，发现自己cache没有a，发消息从cpu0获得了正确的a=1，也返回了正确结果。
 
 
 
