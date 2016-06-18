@@ -168,5 +168,49 @@ smp_mb()的作用是: 导致在下一次store指令之前，cpu必须处理完�
 8. cpu1收到invalidate消息，清掉自己的b=0的cache，在下一次循环中，又要用到b，只能发一个read消息，cpu0先收到之前的invalidate acknowledge消息，把自己的b改成1并刷入memory，现在它的b是exclusive状态，接下来它又收到read消息，将b=1回复给cpu1，同时它的b状态变为shared.
 9. cpu1收到b=1后，终于可以跳出while了，接着，发现自己cache没有a，发消息从cpu0获得了正确的a=1，也返回了正确结果。
 
+解决了这个问题，新问题又来了，如果smp_mb经常用的话，那么每次store都需要等sotre buffer里的所有已有store处理完才能执行，而每个store必然伴随着一次read invalidate/invalidate消息的完全执行，那就相当于还是要完全等待每个acknowledge的返回。
+
+怎样才能让invalidate acknowledge快速返回而不是要等cpu们真正把invalidate执行完毕才返回呢？硬件工程师给每个cpu增加了一个invalidate queues，架构图变为：
+
+{% asset_img cpu5.jpg cpu5 %}
+
+cpu收到一个invalidate消息时，立马把它放到invalidate queue里然后返回一个invalidate acknowledge，而不等待执行invalidate.而cpu要发出invalidate消息时，必须确保invalidate queue里没有相关变量或者已经处理完成。但这个新增机制也可能影响memory barrier的正确性，我们接下来看，假设a b 初始都为0,a是shared，b只在cpu0 cache里存在，cpu0执行foo()，cpu1执行bar():
+
+```java
+void foo(void) {
+    a = 1;
+    smp_mb();
+    b = 1;
+}
+
+void bar(void) {
+    while (b == 0) continue;
+    assert(a == 1);
+}
+```
+
+1. cpu0执行a=1，因为是shared，因此存此操作到store buffer里，并且发了一个invalidate出去，cpu1正在执行b == 0，但是b不在它的cache中，因此发出一个read。
+2. cpu1收到invalidate消息，把它丢到invalidate queue里，然后立马回复了它。cpu0很快收到了回复，开心地把a刷到缓存里，通过了smp_mb()，此时a在它这是modified状态。
+3. cpu0开始接着执行b=1，就它自己有，因此它直接在cache里改了值就行。它又收到read消息，因此刷到内存，返回最新的b=1,同时状态就是shared了。
+4. cpu1收到了read response，b=1进缓存shared。终于跳出了while循环，下一步判断a==1,但此时它cache中还有a=0,之前cpu0给它的invalidate呢，还放在invalidate queue里睡大觉呢，苦逼地出错了。最终才慢悠悠地把cache a给invalidate掉。
+
+我们在bar中也加一个memory barrier，保证读cache的时候先确保invalidate queue里清理干净了。
+```java
+void foo(void) {
+    a = 1;
+    smp_mb();
+    b = 1;
+}
+
+void bar(void) {
+    while (b == 0) continue;
+    smp_mb();
+    assert(a == 1);
+}
+```
+
+其他都一样，当cpu1跳出while循环碰到memory barrier时，它必须要先清理完invalidate queue,把它的cache里的a invalidate掉。现在它的cache没有a了，发出一个read消息被cpu0接收到，cpu0返回了最新的a=1给它，它因此也获得了正确结果。
+
+好了，我们来回顾一下，最终在cpu0和cpu1的流程中都用到了memory barrier来保证正确性。但是cpu0中和invalidate queue没啥关系，cpu1中和store buffer没啥关系。因此，工程师们灵机一动，把它们区分开来，就有了read memory barrier，write memory barrier和all memory barrier。这样就演化出了c中的两个指令smp_wmb()和smp_rmb()。总的看来smp_wmb就是保证当前线程之前store的所有值能被其他线程准确读到，smp_rmb保证了当前线程能读到其他线程改动的各种变量的最新值。
 
 
