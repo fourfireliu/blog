@@ -324,9 +324,50 @@
 
       
         
-          
-            
-          
+          <p>​       谈到Java并发，就要讲到Java内存模型，而Java内存模型又和内存屏障(Memory Barriers)有着千丝万缕的联系。Java内存模型遵守happens-before的规则，否则，Java多线程程序的执行顺序和执行结果完全无迹可寻。先来回顾一下happens-before规则：</p>
+<ul>
+<li>程序顺序规则：一个线程中的每个操作，happens- before 于该线程中的任意后续操作。</li>
+<li>监视器锁规则：对一个监视器锁的解锁，happens- before 于随后对这个监视器锁的加锁。</li>
+<li>volatile变量规则：对一个volatile域的写，happens- before 于任意后续对这个volatile域的读。</li>
+<li>传递性：如果A happens- before B，且B happens- before C，那么A happens- before C。</li>
+</ul>
+<p>happens-before规则的实现很大一部分是靠JVM编译器在生成的指令序列中插入内存屏障指令来实现的。内存屏障能保证该指令前后的代码操作不会被JVM编译器自作聪明地重排序，导致不可预知的后果。内存屏障的实现，则涉及到了操作系统里CPU cache memeory执行指令的原理和优化。最近有幸读到一篇牛人的论文<a href="http://www.rdrop.com/users/paulmck/scalability/paper/whymb.2010.06.07c.pdf">Memory Barriers: a Hardware View for Software Hackers</a>，通俗易懂，深有所得，试阐述一二。</p>
+<p>指令的重排序极大的优化了cpu的性能，为了保证多核多线程指令的正常顺序，Memory Barries也应运而生。由于CPU的计算速度远远大于CPU从内存中读取写入数据的速度，为了提升性能，引入了Cache，现代CPU的架构最初如下：</p>
+<img src="/2016/06/13/about-memory-barriers/cpu1.png" alt="cpu1" title="cpu1">
+<p>当cpu加载数据时，首先尝试从cache中获取，这会导致一个cache miss，cpu将会等待很长时间(相对从cache中获取)从memory中获取该数据，之后每次都是从cache中取这个数据了(除非被其他缓存数据替换)。在多核系统中，当某个cpu要写(刷新)数据时(不管是写到它的cache或者写到memory)，由于是多核系统，要保证所有CPU缓存的一致性，首先要发送消息给其他cpu，通知它们这个数据已废弃(invalidated)，当收到其他所有cpu已废弃的回复后，它可以放心写数据了，如果这个缓存数据的状态(read-only)表示该数据缓存在其他cpu上也有至少一份，那么它就得先实现invalidated，然后再写数据，这称之为write-miss。</p>
+<h3 id="Cache-Coherence-Protocols"><a href="#Cache-Coherence-Protocols" class="headerlink" title="Cache Coherence Protocols"></a>Cache Coherence Protocols</h3><p>正因为不同的cpu有自己的cache，因此cache一致性(cache-coherence)的需求也就随之而生了。为了支持cache一致性，cache定义了多个状态MESI(modified, exclusive, shared, invalid)。</p>
+<p>modified: 表示只有当前cpu cache存有该数据的缓存，而且cache中的数据是最新的，还未刷到内存里。如果当前cache不再想要存放该数据缓存，需要将它刷回内存里。</p>
+<p>exclusive: 和modified很相似，不同在于cache中的数据和内存中的数据是一致的，数据退出cache不需要刷到内存里。</p>
+<p>shared: 内存中数据是最新的，除了当前cache还有别的cpu cache也有数据的缓存。</p>
+<p>invalid: 当前cache缓存无效，意味着新data进cache时，可以优先替换状态为invalid的缓存，因为无需做其他任何操作，不需要刷内存或者通知其他cpu cache保存一致性，不会有任何影响，代价是最低的。</p>
+<h3 id="MESI-Protocol-Messages"><a href="#MESI-Protocol-Messages" class="headerlink" title="MESI Protocol Messages"></a>MESI Protocol Messages</h3><p>在代码执行过程中，各个CPU cache不断的在MESI状态中转换，在转换过程中，多个cpu之间也有着各种通信来保持一致性。记住，每个cpu管理自己的一个cache，数据状态是cache的，消息是cpu发的</p>
+<p>read: 包含了要读取的数据的物理地址(memory地址作为cache的key值)，这是一个读取请求。</p>
+<p>read response: 包含要读的数据 可能来自于其他cache或者直接来自memory，这是一个读取请求的回复。</p>
+<p>invalidate: 包含了要废弃的memory地址，所有其他cache必须执行废弃该地址的的数据的操作并给出回复。</p>
+<p>invalidate acknowledge: 尝试废弃缓存数据后，响应invalidate消息。</p>
+<p>read invalidate: read和invalidate的合体，应该就是要其它cache废弃缓存，同时从内存里读出最新数据作为回复。</p>
+<p>writeback: 消息中包含memory地址和数据，这条命令就是让处于modified状态的cache把数据刷回内存。</p>
+<p>cpu之间消息传送导致cache状态转换关系图如下:</p>
+<img src="/2016/06/13/about-memory-barriers/cpu2.png" alt="cpu2" title="cpu2">
+<ul>
+<li>Transition a: modified-exclusive，主要是cpu发出一个writeback消息。</li>
+<li>Transition b: exclusive-modified，cpu更新了exclusive状态的cache数据，这个转换cpu没有发出接收任何消息。</li>
+<li>Transition c: modified-invalidate，cpu收到了针对它的一个modified状态的数据的read-invalidate消息，cpu将会使该数据失效。(看来这里read-invalidate是读cache上的数据 什么时候需要这样的场景呢？为啥需要invalidate它呢？)</li>
+<li>Transition d: invalidate-modified, cpu在一个废弃cache上执行一个read-modify-write操作，它发出一个read-invalidate消息，读取了某个数据的最新缓存值到自己的缓存上，并要求其他cpu invalidate它们可能的缓存，当它收到所有的invalidate response后，该转换完成。(和transition c的刚好一对)</li>
+<li>Transition e: shared-modified, cpu在此cache中执行了一个read-modify-write的操作，意思就是场景就是(a=1) 这么一个操作，但是初始状态是shared 表示其他cpu cache里还有老的缓存，所以要同时给其他所有cpu发一个invalidate消息，等到收到所有的invalidate response这个转换才算完成。</li>
+<li>Transition f: modified-shared, cpu cache这个数据状态是modified 收到一个read消息 然后返回data作为read response(可能还同时把它刷到memory了)(问题来了 shared到底有没有保证多个cache和memory数据一致呢)</li>
+<li>Transition g: exclusive-shared, 这个和transition f很相像 区别就是f的数据来自于cache 有可能会刷回memory，这里则是数据来自于cache或memory，肯定不需要刷回memory。</li>
+<li>Transition h: shared-exclusive, 使用场景是(cpu意识到它马上就要对这个cache的数据进行更新操作，那么它给其他所有的cpu发了一个这个数据的invalidate命令，导致其他cpu将这个缓存都写回到memory里 invalidate掉缓存)，因此这个转换要等收到所有的invalidate acknowledge才完成。这样这个cache是唯一拥有这个数据的缓存了。</li>
+<li>Transition i: exclusive-invalidate, 使用场景(其他某个cpu对一个不在它缓存上的数据要执行一个read-modify-write的原子操作，因此它群发了一个read-invalidate消息，当前cpu收到这个消息，返回了read-response和invalidate acknowledge，这样看来 对exclusive read-invalidate是读缓存的即可)</li>
+<li>Transition j: invalidate-exclusive, 使用场景(该cpu将要执行的代码是给某个在其他cache中有缓存的数据赋新值，因此它群发了一个read-invalidate消息，当它收集齐全read-response和invalidate-acknowledge时，转换完成，这意味着马上它就要做一个exclusive-modified的转换…那就是一行代码花了几个状态切换才完成。)</li>
+<li>Transition k: invalidate-shared, 使用场景(该cpu要加载一个在别的cache的data，所以发了个read，当收到read response时，转换完成)</li>
+<li>Transition l: shared-invalidate, 遭遇了transition j。</li>
+</ul>
+          <div class="post-more-link text-center">
+            <a class="btn" href="/2016/06/13/about-memory-barriers/#more" rel="contents">
+              阅读全文 &raquo;
+            </a>
+          </div>
         
       
     </div>
