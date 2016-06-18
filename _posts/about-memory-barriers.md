@@ -74,6 +74,7 @@ cpu之间消息传送导致cache状态转换关系图如下:
 - Transition k: invalidate-shared, 使用场景(该cpu要加载一个在别的cache的data，所以发了个read，当收到read response时，转换完成)
 - Transition l: shared-invalidate, 遭遇了transition j。
 
+<!-- more -->
 
 
 由上可以发现一点，在transition j中，如果cpu0要给某个在别的cache中有缓存的memory地址赋新值，它必须发出一个invalidate 然后一直等到收集齐invalidate acknowledge才能进行操作。但反过来想想cpu0为什么一定要等cpu1的响应结果呢？无论cpu1那边有还是没有data缓存，cpu0都是要做赋新值的操作的，cpu1的原缓存值是多少然后过了多久做invalidate并不会影响cpu0的赋值结果(我们这里当然是假定cpu间的通信是永远不会丢失的，处于一个理想状态)。
