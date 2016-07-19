@@ -37,6 +37,9 @@ categories:
 
    这时你就会处于要提交一个新commit的状态 commit注释就是revert xxx，接下来只需要执行git push即可。如果代码是比较早的，revert导致了冲突 你也要先解决冲突才行。另外，如果要revert几个commit，请注意他们的先后顺序，先revert后提交的，就像一个stack一样，避免不必要的代码冲突。
 
-   ​
+3. 这个情况可能出现的比较少 有时候git add git commit 过后，忽然由于什么原因git push不了了 或者想起了什么需要在这个commit上重新修改，总之就是想要从git commit状态回退到一切都未提交状态，修改的代码当然还得在，这个时候可以使用
 
- 
+   git reset --soft HEAD^ 
+
+   HEAD^就表示上一次提交​，这命令表示reset到上一次提交状态 但是用--soft来保证这次的修改还在。
+
