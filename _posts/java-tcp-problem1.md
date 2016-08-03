@@ -11,6 +11,7 @@ categories:
 
 现象：从机器A向机器B传输一个大文件，网络带宽足够，有百兆，但是网络延时较高，ping值大约为100ms。java bio单线程不能达到100k，采用java nio的话，则基本能打满。
 
+<!-- more -->
 原因分析：首先来看传输大文件这个流程，java socket算是应用层的，然后发送tcp包。先看bio传输文件的做法，一般是启一个socket，BufferedInputStream读文件到byte[] buffer里，socket.getOutputStream().write(buffer)，最终是调用natvie方法
 
 ```java
